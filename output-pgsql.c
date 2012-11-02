@@ -40,7 +40,7 @@
 #define MAX_STYLES 1000
 
 enum table_id {
-    t_point, t_line, t_poly, t_roads
+    t_point, t_line, t_poly
 };
 
 static const struct output_options *Options;
@@ -58,8 +58,7 @@ static struct s_table {
 } tables [] = {
     { .name = "%s_point",   .type = "POINT"     },
     { .name = "%s_line",    .type = "LINESTRING"},
-    { .name = "%s_polygon", .type = "GEOMETRY"  }, // Actually POLGYON & MULTIPOLYGON but no way to limit to just these two
-    { .name = "%s_roads",   .type = "LINESTRING"}
+    { .name = "%s_polygon", .type = "GEOMETRY"  } // Actually POLGYON & MULTIPOLYGON but no way to limit to just these two
 };
 #define NUM_TABLES ((signed)(sizeof(tables) / sizeof(tables[0])))
 
@@ -91,15 +90,11 @@ struct taginfo {
 static struct taginfo *exportList[4]; /* Indexed by enum table_id */
 static int exportListCount[4];
 
-/* Data to generate z-order column and road table
- * The name of the roads table is misleading, this table
- * is used for any feature to be shown at low zoom.
- * This includes railways and administrative boundaries too
+/* Data to generate z-order column
  */
 static struct {
     int offset;
     const char *highway;
-    int roads;
 } layers[] = {
     { 3, "minor",         0 },
     { 3, "road",          0 },
@@ -308,7 +303,7 @@ void copy_to_table(enum table_id table, const char *sql)
     tables[table].buflen = buflen;
 }
 
-static int add_z_order(struct keyval *tags, int *roads)
+static int add_z_order(struct keyval *tags)
 {
     const char *layer   = getItem(tags, "layer");
     const char *highway = getItem(tags, "highway");
@@ -324,25 +319,15 @@ static int add_z_order(struct keyval *tags, int *roads)
 
     l = layer ? strtol(layer, NULL, 10) : 0;
     z_order = 10 * l;
-    *roads = 0;
 
     if (highway) {
         for (i=0; i<nLayers; i++) {
             if (!strcmp(layers[i].highway, highway)) {
                 z_order += layers[i].offset;
-                *roads   = layers[i].roads;
                 break;
             }
         }
     }
-
-    if (railway && strlen(railway)) {
-        z_order += 5;
-        *roads = 1;
-    }
-    // Administrative boundaries are rendered at low zooms so we prefer to use the roads table
-    if (boundary && !strcmp(boundary, "administrative"))
-        *roads = 1;
 
     if (bridge && (!strcmp(bridge, "true") || !strcmp(bridge, "yes") || !strcmp(bridge, "1")))
         z_order += 10;
@@ -884,7 +869,7 @@ E4C1421D5BF24D06053E7DF4940
 */
 static int pgsql_out_way(osmid_t id, struct keyval *tags, struct osmNode *nodes, int count, int exists)
 {
-    int polygon = 0, roads = 0;
+    int polygon = 0;
     int i, wkt_size;
     double split_at;
 
@@ -894,7 +879,7 @@ static int pgsql_out_way(osmid_t id, struct keyval *tags, struct osmNode *nodes,
         Options->mid->way_changed(id);
     }
 
-    if (pgsql_filter_tags(OSMTYPE_WAY, tags, &polygon) || add_z_order(tags, &roads))
+    if (pgsql_filter_tags(OSMTYPE_WAY, tags, &polygon) || add_z_order(tags))
         return 0;
 
     // Split long ways after around 1 degree or 100km
@@ -923,8 +908,6 @@ static int pgsql_out_way(osmid_t id, struct keyval *tags, struct osmNode *nodes,
             } else {
                 expire_tiles_from_nodes_line(nodes, count);
                 write_wkts(id, tags, wkt, t_line);
-                if (roads)
-                    write_wkts(id, tags, wkt, t_roads);
             }
         }
         free(wkt);
@@ -937,7 +920,7 @@ static int pgsql_out_way(osmid_t id, struct keyval *tags, struct osmNode *nodes,
 static int pgsql_out_relation(osmid_t id, struct keyval *rel_tags, struct osmNode **xnodes, struct keyval *xtags, int *xcount, osmid_t *xid, const char **xrole)
 {
     int i, wkt_size;
-    int polygon = 0, roads = 0;
+    int polygon = 0;
     int make_polygon = 0;
     int make_boundary = 0;
     struct keyval tags, *p, poly_tags;
@@ -1117,7 +1100,7 @@ static int pgsql_out_relation(osmid_t id, struct keyval *rel_tags, struct osmNod
         return 0;
     }
 
-    if (pgsql_filter_tags(OSMTYPE_WAY, &tags, &polygon) || add_z_order(&tags, &roads)) {
+    if (pgsql_filter_tags(OSMTYPE_WAY, &tags, &polygon) || add_z_order(&tags)) {
         resetList(&tags);
         resetList(&poly_tags);
         return 0;
@@ -1154,8 +1137,6 @@ static int pgsql_out_relation(osmid_t id, struct keyval *rel_tags, struct osmNod
                 write_wkts(-id, &tags, wkt, t_poly);
             } else {
                 write_wkts(-id, &tags, wkt, t_line);
-                if (roads)
-                    write_wkts(-id, &tags, wkt, t_roads);
             }
         }
         free(wkt);
@@ -1742,10 +1723,8 @@ static int pgsql_delete_way_from_output(osmid_t osm_id)
     /* in droptemp mode we don't have indices and this takes ages. */
     if (Options->droptemp)
         return 0;
-    pgsql_pause_copy(&tables[t_roads]);
     pgsql_pause_copy(&tables[t_line]);
     pgsql_pause_copy(&tables[t_poly]);
-    pgsql_exec(tables[t_roads].sql_conn, PGRES_COMMAND_OK, "DELETE FROM %s WHERE osm_id = %" PRIdOSMID, tables[t_roads].name, osm_id );
     if ( expire_tiles_from_db(tables[t_line].sql_conn, osm_id) != 0)
         pgsql_exec(tables[t_line].sql_conn, PGRES_COMMAND_OK, "DELETE FROM %s WHERE osm_id = %" PRIdOSMID, tables[t_line].name, osm_id );
     if ( expire_tiles_from_db(tables[t_poly].sql_conn, osm_id) != 0)
@@ -1768,10 +1747,8 @@ static int pgsql_delete_way(osmid_t osm_id)
 /* Relations are identified by using negative IDs */
 static int pgsql_delete_relation_from_output(osmid_t osm_id)
 {
-    pgsql_pause_copy(&tables[t_roads]);
     pgsql_pause_copy(&tables[t_line]);
     pgsql_pause_copy(&tables[t_poly]);
-    pgsql_exec(tables[t_roads].sql_conn, PGRES_COMMAND_OK, "DELETE FROM %s WHERE osm_id = %" PRIdOSMID, tables[t_roads].name, -osm_id );
     if ( expire_tiles_from_db(tables[t_line].sql_conn, -osm_id) != 0)
         pgsql_exec(tables[t_line].sql_conn, PGRES_COMMAND_OK, "DELETE FROM %s WHERE osm_id = %" PRIdOSMID, tables[t_line].name, -osm_id );
     if ( expire_tiles_from_db(tables[t_poly].sql_conn, -osm_id) != 0)
