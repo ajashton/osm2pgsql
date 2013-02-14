@@ -65,7 +65,7 @@
 
 int verbose;
 
-// Data structure carrying all parsing related variables
+/* Data structure carrying all parsing related variables */
 static struct osmdata_t osmdata = { 
   .filetype = FILETYPE_NONE,
   .action   = ACTION_NONE,
@@ -198,8 +198,10 @@ static void long_usage(char *arg0)
     printf("              \t\tBy default natural=coastline tagged data will be discarded based on the\n");
     printf("              \t\tassumption that post-processed Coastline Checker shapefiles will be used.\n");
     printf("      --exclude-invalid-polygon\n");
+#ifdef HAVE_FORK
     printf("      --number-processes\t\tSpecifies the number of parallel processes used for certain operations\n");
     printf("             \t\tDefault is 1\n");
+#endif
     printf("   -I|--disable-parallel-indexing\tDisable indexing all tables concurrently.\n");
     printf("      --unlogged\tUse unlogged tables (lost on crash but faster). Requires PostgreSQL 9.1.\n");
     printf("      --cache-strategy\tSpecifies the method used to cache nodes in ram.\n");
@@ -311,10 +313,13 @@ void resetMembers(struct osmdata_t *osmdata)
 void printStatus(struct osmdata_t *osmdata)
 {
     time_t now;
+    time_t end_nodes;
+    time_t end_way;
+    time_t end_rel;
     time(&now);
-    time_t end_nodes = osmdata->start_way > 0 ? osmdata->start_way : now;
-    time_t end_way = osmdata->start_rel > 0 ? osmdata->start_rel : now;
-    time_t end_rel =  now;
+    end_nodes = osmdata->start_way > 0 ? osmdata->start_way : now;
+    end_way = osmdata->start_rel > 0 ? osmdata->start_rel : now;
+    end_rel =  now;
     fprintf(stderr, "\rProcessing: Node(%" PRIdOSMID "k %.1fk/s) Way(%" PRIdOSMID "k %.2fk/s) Relation(%" PRIdOSMID " %.2f/s)",
             osmdata->count_node/1000,
             (double)osmdata->count_node/1000.0/((int)(end_nodes - osmdata->start_node) > 0 ? (double)(end_nodes - osmdata->start_node) : 1.0),
@@ -363,16 +368,22 @@ int main(int argc, char *argv[])
     int droptemp = 0;
     int unlogged = 0;
     int excludepoly = 0;
+    time_t start, end;
+    time_t overall_start, overall_end;
+    time_t now;
+    time_t end_nodes;
+    time_t end_way;
+    time_t end_rel;
     const char *expire_tiles_filename = "dirty_tiles";
     const char *db = "gis";
     const char *username=NULL;
     const char *host=NULL;
     const char *password=NULL;
     const char *port = "5432";
-    const char *tblsmain_index = NULL; // no default TABLESPACE for index on main tables
-    const char *tblsmain_data = NULL;  // no default TABLESPACE for main tables
-    const char *tblsslim_index = NULL; // no default TABLESPACE for index on slim mode tables
-    const char *tblsslim_data = NULL;  // no default TABLESPACE for slim mode tables
+    const char *tblsmain_index = NULL; /* no default TABLESPACE for index on main tables */
+    const char *tblsmain_data = NULL;  /* no default TABLESPACE for main tables */
+    const char *tblsslim_index = NULL; /* no default TABLESPACE for index on slim mode tables */
+    const char *tblsslim_data = NULL;  /* no default TABLESPACE for slim mode tables */
     const char *conninfo = NULL;
     const char *prefix = "planet_osm";
     const char *style = OSM2PGSQL_DATADIR "/default.style";
@@ -483,7 +494,7 @@ int main(int argc, char *argv[])
             case 'j': enable_hstore=HSTORE_ALL; break;
             case 'z': 
                 n_hstore_columns++;
-                hstore_columns = (const char**)realloc(hstore_columns, sizeof(&n_hstore_columns) * n_hstore_columns);
+                hstore_columns = (const char**)realloc(hstore_columns, sizeof(char *) * n_hstore_columns);
                 hstore_columns[n_hstore_columns-1] = optarg;
                 break;
             case 'G': enable_multi=1; break;
@@ -500,7 +511,13 @@ int main(int argc, char *argv[])
                 if (strcmp(optarg,"sparse") == 0) alloc_chunkwise = ALLOC_SPARSE;
                 if (strcmp(optarg,"optimized") == 0) alloc_chunkwise = ALLOC_DENSE | ALLOC_SPARSE;
                 break;
-            case 205: num_procs = atoi(optarg); break;
+            case 205:
+#ifdef HAVE_FORK                
+                num_procs = atoi(optarg);
+#else
+                fprintf(stderr, "WARNING: osm2pgsql was compiled without fork, only using one process!\n");
+#endif
+                break;
             case 206: droptemp = 1; break;
             case 207: unlogged = 1; break;
             case 209:
@@ -521,7 +538,7 @@ int main(int argc, char *argv[])
         exit(EXIT_SUCCESS);
     }
 
-    if (argc == optind) {  // No non-switch arguments
+    if (argc == optind) {  /* No non-switch arguments */
         short_usage(argv[0]);
         exit(EXIT_FAILURE);
     }
@@ -651,9 +668,7 @@ int main(int argc, char *argv[])
       }
     }
 
-    time_t overall_start, overall_end;
     time(&overall_start);
-
     osmdata.out->start(&options);
 
     realloc_nodes(&osmdata);
@@ -670,20 +685,20 @@ int main(int argc, char *argv[])
         /* if input_reader is not forced by -r switch try to auto-detect it
            by file extension */
         if (strcmp("auto", input_reader) == 0) {
-#ifdef BUILD_READER_PBF
+
           if (strcasecmp(".pbf",argv[optind]+strlen(argv[optind])-4) == 0) {
+#ifdef BUILD_READER_PBF
             streamFile = &streamFilePbf;
+#else
+	    fprintf(stderr, "ERROR: PBF support has not been compiled into this version of osm2pgsql, please either compile it with pbf support or use one of the other input formats\n");
+	    exit(EXIT_FAILURE);
+#endif
           } else if (strcasecmp(".o5m",argv[optind]+strlen(argv[optind])-4) == 0) {
               streamFile = &streamFileO5m;
           } else {
             streamFile = &streamFileXML2;
           }
-#else
-          streamFile = &streamFileXML2;
-#endif
         }
-        time_t start, end;
-
         fprintf(stderr, "\nReading in file: %s\n", argv[optind]);
         time(&start);
         if (streamFile(argv[optind], sanitize, &osmdata) != 0)
@@ -697,11 +712,10 @@ int main(int argc, char *argv[])
     xmlMemoryDump();
     
     if (osmdata.count_node || osmdata.count_way || osmdata.count_rel) {
-        time_t now;
         time(&now);
-        time_t end_nodes = osmdata.start_way > 0 ? osmdata.start_way : now;
-        time_t end_way = osmdata.start_rel > 0 ? osmdata.start_rel : now;
-        time_t end_rel =  now;
+        end_nodes = osmdata.start_way > 0 ? osmdata.start_way : now;
+        end_way = osmdata.start_rel > 0 ? osmdata.start_rel : now;
+        end_rel =  now;
         fprintf(stderr, "\n");
         fprintf(stderr, "Node stats: total(%" PRIdOSMID "), max(%" PRIdOSMID ") in %is\n", osmdata.count_node, osmdata.max_node,
                 osmdata.count_node > 0 ? (int)(end_nodes - osmdata.start_node) : 0);
@@ -715,7 +729,7 @@ int main(int argc, char *argv[])
     free(osmdata.nds);
     free(osmdata.members);
     
-    // free the column pointer buffer
+    /* free the column pointer buffer */
     free(hstore_columns);
 
     project_exit();

@@ -55,7 +55,7 @@ static uint32_t get_length(FILE *input)
   return ntohl(*((size_t *)buf));
 }
 
-static inline void *realloc_or_free(void *p, size_t len)
+static void *realloc_or_free(void *p, size_t len)
 {
   void *new = realloc(p, len);
 
@@ -197,6 +197,12 @@ int addProtobufItem(struct keyval *head, ProtobufCBinaryData key, ProtobufCBinar
   keystr = calloc(key.len + 1, 1);
   memcpy(keystr, key.data, key.len);
 
+  /* drop certain keys (matching parse-xml2) */
+  if ((strcmp(keystr, "created_by") == 0) || (strcmp(keystr, "source") == 0)) {
+    free(keystr);
+    return 0;
+  }
+
   valstr = calloc(val.len + 1, 1);
   memcpy(valstr, val.data, val.len);
   
@@ -334,7 +340,7 @@ int processOsmDataDenseNodes(struct osmdata_t *osmdata, PrimitiveGroup *group, S
                 
 #if 0
                 /* TODO */
-                if (deltauid != -1) { // osmosis devs failed to read the specs
+                if (deltauid != -1) { /* osmosis devs failed to read the specs */
                     printuser(string_table->s[deltauser_sid]);
                     printnumericattribute("osm_uid", deltauid);
                 }
@@ -514,16 +520,16 @@ int processOsmDataRelations(struct osmdata_t *osmdata, PrimitiveGroup *group, St
 int processOsmData(struct osmdata_t *osmdata, void *data, size_t length) 
 {
   unsigned int j;
+  double lat_offset, lon_offset, granularity;
   PrimitiveBlock *pmsg = primitive_block__unpack (NULL, length, data);
   if (pmsg == NULL) {
     fprintf(stderr, "Error unpacking PrimitiveBlock message\n");
     return 0;
   }
 
-  double lat_offset = NANO_DEGREE * pmsg->lat_offset;
-  double lon_offset = NANO_DEGREE * pmsg->lon_offset;
-  double granularity = NANO_DEGREE * pmsg->granularity;
-      
+  lat_offset = NANO_DEGREE * pmsg->lat_offset;
+  lon_offset = NANO_DEGREE * pmsg->lon_offset;
+  granularity = NANO_DEGREE * pmsg->granularity;    
 
   for (j = 0; j < pmsg->n_primitivegroup; j++) {
     PrimitiveGroup *group = pmsg->primitivegroup[j];

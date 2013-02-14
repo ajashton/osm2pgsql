@@ -47,6 +47,8 @@ void test_get_node_list(int itterations, int max_size, int process_number) {
         gettimeofday(&stop, NULL);
         double duration = ((stop.tv_sec - start.tv_sec)*1000000.0 + (stop.tv_usec - start.tv_usec))/1000000.0;
         printf("Process %i: Got nodes in %f at a rate of %f/s\n", process_number, duration, node_cnt / duration);
+        free(nodes);
+        free(osmids);
     }
     gettimeofday(&stop_overall, NULL);
     double duration = ((stop_overall.tv_sec - start_overall.tv_sec)*1000000.0 + (stop_overall.tv_usec - start_overall.tv_usec))/1000000.0;
@@ -90,6 +92,7 @@ int main(int argc, char *argv[]) {
 	    init_node_persistent_cache(&options, 1);
 	    test_get_node_list(10, 200, 0);
 	    shutdown_node_persistent_cache();
+#ifdef HAVE_FORK
 	    printf("Testing using multiple processes\n");
 	    int noProcs = 4;
 	    int pid;
@@ -114,14 +117,11 @@ int main(int argc, char *argv[]) {
 	        fprintf(stderr,"Exiting process %i\n", p);
 	        exit(0);
 	    } else {
-	        //fprintf(stderr,"Counting %i\n", p);
-	        //for (long k = 0; k < (1l << 60); k++) if (k == (1l<<50)) printf(stderr,"SHouldn't be here");
-	        //fprintf(stderr,"Counted\n", p);
-
 	        for (p = 0; p < noProcs; p++) wait(NULL);
 	    }
         free(state);
 	    fprintf(stderr, "\nAll child processes exited\n");
+#endif
 	} else {
 	    init_node_persistent_cache(&options, 1);
 		if (strstr(argv[2],",") == NULL) {
