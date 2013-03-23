@@ -287,7 +287,7 @@ int parse_wkt(const char * wkt, struct osmNode *** xnodes, int ** xcount, int * 
         }
         delete geometry;
     } catch (...) {
-        std::cerr << std::endl << "Exception caught parsing PostGIS data" << std::endl;
+        // std::cerr << std::endl << "Exception caught parsing PostGIS data" << std::endl;
         return -1;
     }
     return 0;
