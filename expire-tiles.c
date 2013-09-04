@@ -23,6 +23,7 @@
 #define HALF_EARTH_CIRCUMFERENCE	(EARTH_CIRCUMFERENCE / 2)
 #define TILE_EXPIRY_LEEWAY		0.1		/* How many tiles worth of space to leave either side of a changed feature */
 #define EXPIRE_TILES_MAX_BBOX		20000		/* Maximum width or height of a bounding box (metres) */
+#define EXPIRE_TILES_BAIL_BBOX      1000000
 
 struct tile {
 	int		complete[2][2];	/* Flags */
@@ -319,6 +320,8 @@ int expire_tiles_from_bbox(double min_lon, double min_lat, double max_lon, doubl
 		return ret;
 	}
 
+    if (width > EXPIRE_TILES_BAIL_BBOX) return -2;
+    if (height > EXPIRE_TILES_BAIL_BBOX) return -2;
 	if (width > EXPIRE_TILES_MAX_BBOX) return -1;
 	if (height > EXPIRE_TILES_MAX_BBOX) return -1;
 
@@ -369,6 +372,7 @@ void expire_tiles_from_nodes_line(struct osmNode * nodes, int count) {
 void expire_tiles_from_nodes_poly(struct osmNode * nodes, int count, osmid_t osm_id) {
 	int	i;
 	int	got_coords = 0;
+    int expire_tiles = 0;
 	double	min_lon = 0.0;
 	double	min_lat = 0.0;
 	double	max_lon = 0.0;
@@ -383,11 +387,15 @@ void expire_tiles_from_nodes_poly(struct osmNode * nodes, int count, osmid_t osm
 		got_coords = 1;
 	}
 	if (got_coords) {
-		if (expire_tiles_from_bbox(min_lon, min_lat, max_lon, max_lat)) {
+        expire_tiles = expire_tiles_from_bbox(min_lon, min_lat, max_lon, max_lat);
+		if (expire_tiles == -1) {
 			/* Bounding box too big - just expire tiles on the line */
 			fprintf(stderr, "\rLarge polygon (%.0f x %.0f metres, OSM ID %" PRIdOSMID ") - only expiring perimeter\n", max_lon - min_lon, max_lat - min_lat, osm_id);
 			expire_tiles_from_nodes_line(nodes, count);
-		}
+		} else if (expire_tiles == -2)  {
+            /* Bounding box WAY too big - get out of there! */
+            fprintf(stderr, "\rExtremely large polygon (%.0f x %.0f metres, OSM ID %" PRIdOSMID ") - not expiring\n", max_lon - min_lon, max_lat - min_lat, osm_id);
+        }
 	}
 }
 
